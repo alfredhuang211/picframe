@@ -1,0 +1,137 @@
+# fnos-pic-desktop —— 电子相册
+#
+# 两个服务：
+#   picframe          相册服务（Web 后端 + 管理界面 + 幻灯片页面），只读挂载照片目录
+#   picframe-display  HDMI 显示端（cage + Chromium 全屏 kiosk），需要直通显卡
+#
+# 用法：
+#   cp .env.example .env   # 按里面的说明改路径
+#   docker compose up -d --build
+#
+# 在 x86 的 fnOS 上部署时，先看 README.md 的「部署」一节。
+
+name: picframe
+
+services:
+
+  # ---------------------------------------------------------------- 相册服务
+  picframe:
+    build:
+      context: ./server
+    image: fnos-picframe:latest
+    container_name: picframe
+    restart: always
+    ports:
+      # 宿主端口默认 18080：避开 fnOS 自己占用的 22/80/443/5666/5667/8000-8006
+      - "${PICFRAME_PORT:-18080}:8080"
+    environment:
+      TZ: "${TZ:-Asia/Shanghai}"
+      # 以哪个身份读写 /data 和 /cache。fnOS 首个用户通常是 1000，用 `id` 命令确认。
+      PUID: "${PUID:-1000}"
+      PGID: "${PGID:-100}"
+      # 容器内允许浏览的照片根目录，与下面的 volumes 挂载点对应
+      PHOTO_ROOTS: "/photos/main"
+      DATA_DIR: "/data"
+      CACHE_DIR: "/cache"
+      LOG_LEVEL: "INFO"
+    volumes:
+      # 照片目录：只读挂载。
+      #
+      # 默认建议挂一个「上层目录」（例如 /vol1/1000），这样在管理界面里
+      # 可以自由进入任意子文件夹挑选，不用每加一个相册就改一次 compose。
+      # 想缩小范围就把 .env 里的 PHOTO_DIR_1 改成具体的照片目录。
+      - "${PHOTO_DIR_1:?请先复制 .env.example 为 .env 并设置 PHOTO_DIR_1}:/photos/main:ro"
+
+      # 需要第二个照片根目录时，取消下面两行的注释，
+      # 并把上面的 PHOTO_ROOTS 改成 "/photos/main,/photos/second"：
+      # - "${PHOTO_DIR_2:-/vol1/1000/Photos2}:/photos/second:ro"
+
+      - "${PICFRAME_DATA:-/vol1/1000/docker/picframe}/config:/data"
+      - "${PICFRAME_DATA:-/vol1/1000/docker/picframe}/cache:/cache"
+    security_opt:
+      - no-new-privileges:true
+
+  # ---------------------------------------------------------------- HDMI 显示端
+  picframe-display:
+    build:
+      context: ./display
+    image: fnos-picframe-display:latest
+    container_name: picframe-display
+    restart: always
+
+    # 这里**不需要** privileged: true。
+    # 内核里第一个打开 /dev/dri/card0 的进程直接就是 DRM master，没有能力检查；
+    # DRM_IOCTL_SET_MASTER 也没挂 CAP_SYS_ADMIN 检查。给出设备节点就足够了。
+    # （真要遇到权限问题，先看 README 的排查表，最后一招才是取消下面 privileged 的注释。）
+    # privileged: true
+
+    devices:
+      - /dev/dri:/dev/dri
+      # 接无线键盘 / 遥控器需要它；纯看图可以注释掉
+      - /dev/input:/dev/input
+      # 需要 HDMI 出声再打开（同时把 ENABLE_AUDIO 设为 1）：
+      # - /dev/snd:/dev/snd
+
+    # devices: 只对「容器创建时已存在」的设备节点加 cgroup 放行规则。
+    # 这几条负责之后热插拔出来的设备（226 = DRM，13 = input）。
+    # 某些 fnOS 版本可能会过滤这个字段；即使被忽略也不影响首次启动。
+    device_cgroup_rules:
+      - "c 226:* rmw"
+      - "c 13:* rmw"
+
+    # Docker 默认 /dev/shm 只有 64MB，Chromium 不够用。
+    # 注意 entrypoint 还带了 --disable-dev-shm-usage，Chromium 实际用的是 /tmp，
+    # 所以这一项只是保险；真正要够大的是下面的 /tmp tmpfs。
+    shm_size: "512m"
+
+    volumes:
+      # 让容器里的 libinput 能看到宿主机识别出来的输入设备
+      - /run/udev:/run/udev:ro
+
+    tmpfs:
+      # Chromium 的 profile、HTTP 缓存（相册的预览图都缓在这里）、共享内存
+      # 三者共用这一块。512m 在长跑 + 大图库下会被写满，
+      # 表现是 Chromium 崩溃然后进重启循环，所以给到 1g（tmpfs 按实际用量占内存）。
+      - /tmp:rw,size=1g,mode=1777
+
+    environment:
+      TZ: "${TZ:-Asia/Shanghai}"
+      PICFRAME_URL: "http://picframe:8080"
+      # seat 用 libseat 内置实现，不跑守护进程、不需要 /dev/tty0
+      LIBSEAT_BACKEND: "builtin"
+      SEATD_VTBOUND: "0"
+      # 音频默认关闭：fnOS 的 HDMI 音频本身是社区公认的坑，
+      # 先在宿主机用 `aplay -l` + `speaker-test` 确认好通道再打开。
+      ENABLE_AUDIO: "${ENABLE_AUDIO:-0}"
+      AUDIO_DEVICE: "${AUDIO_DEVICE:-}"
+
+      # ---- 兜底 / 排查开关 ----
+      # 全部可以在 .env 里直接改，**不用动本文件**：
+      #   WLR_RENDERER=pixman      画面全黑但 compositor 活着 → 强制软件渲染
+      #   DISABLE_GPU=1            让 Chromium 也走软件渲染
+      #   WLR_DRM_NO_MODIFIERS=1   amdgpu / nouveau 的 DRM modifier 兼容问题
+      #   WLR_DRM_NO_ATOMIC=1
+      #   HOTPLUG_WATCHDOG=0       关掉 HDMI 热插拔看门狗
+      #   RESTART_DELAY=10         kiosk 退出后的重启间隔
+      #   CAGE_OPTS="-m last -d"   cage 命令行
+      #   CHROMIUM_EXTRA_FLAGS="--lang=en-US"
+      #
+      # 留空 = 用镜像里的默认值。空的 WLR_* 会被入口脚本清掉：
+      # wlroots 判断的是 getenv() 是否为 NULL，空字符串会被当成「已设置」，
+      # 反而会关掉它的自动降级。
+      WLR_RENDERER: "${WLR_RENDERER:-}"
+      DISABLE_GPU: "${DISABLE_GPU:-}"
+      WLR_DRM_NO_MODIFIERS: "${WLR_DRM_NO_MODIFIERS:-}"
+      WLR_DRM_NO_ATOMIC: "${WLR_DRM_NO_ATOMIC:-}"
+      HOTPLUG_WATCHDOG: "${HOTPLUG_WATCHDOG:-}"
+      RESTART_DELAY: "${RESTART_DELAY:-}"
+      CAGE_OPTS: "${CAGE_OPTS:-}"
+      CHROMIUM_EXTRA_FLAGS: "${CHROMIUM_EXTRA_FLAGS:-}"
+
+    security_opt:
+      - no-new-privileges:true
+
+    # 短写法只保证「先启动」，不保证健康。
+    # 服务端首扫已经改成后台任务，端口会立刻可用，所以这里够用。
+    depends_on:
+      - picframe

@@ -1,0 +1,6 @@
+# Web 服务 + 图片处理
+fastapi>=0.115,<0.200
+uvicorn[standard]>=0.30,<0.40
+pillow>=10.4
+# HEIC/HEIF（iPhone 照片）支持。装不上也不会影响启动，代码里做了可选导入。
+pillow-heif>=0.18

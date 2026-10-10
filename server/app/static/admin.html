@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>电子相册 · 管理</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%234c8dff'/%3E%3Ccircle cx='11' cy='12' r='3' fill='%23fff'/%3E%3Cpath d='M4 26l8-9 5 6 4-4 7 7z' fill='%23fff'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">🖼</span>
+    <span>电子相册</span>
+    <span class="ver" id="version"></span>
+  </div>
+  <div class="headline" id="headline"></div>
+  <div class="topactions">
+    <div class="remote" title="遥控正在播放的那块屏幕">
+      <button class="btn small" id="rc-prev" title="上一张">⏮</button>
+      <button class="btn small" id="rc-toggle" title="暂停 / 继续">⏯</button>
+      <button class="btn small" id="rc-next" title="下一张">⏭</button>
+    </div>
+    <a class="btn ghost" href="/display" target="_blank" rel="noopener">打开显示页</a>
+    <button class="btn primary" id="btn-save" disabled>保存并应用</button>
+  </div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button class="tab active" data-tab="folders">选择文件夹</button>
+  <button class="tab" data-tab="photos">挑选照片</button>
+  <button class="tab" data-tab="settings">播放设置</button>
+</nav>
+
+<main>
+  <!-- ------------------------------------------------ 选择文件夹 -->
+  <section class="panel active" id="panel-folders">
+    <div class="navigator" id="navigator"></div>
+    <div class="split">
+      <div class="browser">
+        <div class="crumb" id="crumb-folders"></div>
+        <div class="dirlist" id="dirlist"></div>
+      </div>
+      <aside class="picker">
+        <h3>已选文件夹 <span class="count" id="count-sources">0</span></h3>
+        <p class="hint">选中一个文件夹，它下面的所有照片（含子目录）都会进入播放列表。</p>
+        <div class="chips" id="chips-sources"></div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------ 挑选照片 -->
+  <section class="panel" id="panel-photos">
+    <div class="navigator" id="navigator-photos"></div>
+    <div class="crumb" id="crumb-photos"></div>
+    <div class="toolbar">
+      <button class="btn small" id="btn-select-page">全选本页</button>
+      <button class="btn small" id="btn-clear-page">清空本页选择</button>
+      <button class="btn small" id="btn-exclude-page">排除本页</button>
+      <span class="legend">
+        <i class="dot included"></i>已选中
+        <i class="dot inherited"></i>所属文件夹已选中
+        <i class="dot excluded"></i>已排除
+      </span>
+    </div>
+    <div class="grid" id="photogrid"></div>
+    <div class="pager" id="pager"></div>
+    <aside class="picker wide">
+      <h3>单独挑中的照片 <span class="count" id="count-includes">0</span></h3>
+      <p class="hint">只挑几张时用它，不必把整个文件夹加进来。</p>
+      <div class="chips" id="chips-includes"></div>
+      <h3>排除的照片 <span class="count" id="count-excludes">0</span></h3>
+      <div class="chips" id="chips-excludes"></div>
+    </aside>
+  </section>
+
+  <!-- ------------------------------------------------ 播放设置 -->
+  <section class="panel" id="panel-settings">
+    <div class="formgrid">
+
+      <fieldset>
+        <legend>播放节奏</legend>
+        <label class="field">
+          <span>每张停留</span>
+          <input type="number" data-path="interval_seconds" min="1" max="3600" step="0.5">
+          <em>秒</em>
+        </label>
+        <label class="field">
+          <span>转场效果</span>
+          <select data-path="transition">
+            <option value="fade">淡入淡出</option>
+            <option value="zoom">淡入 + 轻微缩放</option>
+            <option value="slide">侧向滑动</option>
+            <option value="none">无转场（瞬切）</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>转场时长</span>
+          <input type="number" data-path="transition_ms" min="0" max="10000" step="100">
+          <em>毫秒</em>
+        </label>
+        <label class="field">
+          <span>播放顺序</span>
+          <select data-path="order">
+            <option value="shuffle">每次随机（推荐）</option>
+            <option value="shuffle-daily">每天固定随机</option>
+            <option value="name">按文件名</option>
+            <option value="date">按文件时间（早→晚）</option>
+            <option value="date-desc">按拍摄时间（晚→早）</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>重新抽取列表</span>
+          <input type="number" data-path="reload_playlist_minutes" min="0" max="1440" step="5">
+          <em>分钟（0 = 不重抽）</em>
+        </label>
+        <p class="note">照片特别多时列表会截断，靠「定期重抽」把整个库慢慢轮完。</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>画面</legend>
+        <label class="field">
+          <span>适配方式</span>
+          <select data-path="fit">
+            <option value="contain">完整显示（可能留边）</option>
+            <option value="cover">铺满屏幕（会裁切）</option>
+          </select>
+        </label>
+        <label class="field check">
+          <input type="checkbox" data-path="matte">
+          <span>留边处用模糊背景填充</span>
+        </label>
+        <label class="field check">
+          <input type="checkbox" data-path="ken_burns">
+          <span>缓慢推近（Ken Burns）</span>
+        </label>
+        <label class="field">
+          <span>推近幅度</span>
+          <input type="number" data-path="ken_burns_amount" min="1" max="1.5" step="0.01">
+          <em>倍</em>
+        </label>
+        <label class="field">
+          <span>背景色</span>
+          <input type="color" data-path="background">
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>屏幕上的文字</legend>
+        <label class="field check">
+          <input type="checkbox" data-path="show_clock">
+          <span>显示时钟与日期</span>
+        </label>
+        <label class="field check">
+          <input type="checkbox" data-path="clock_24h">
+          <span>24 小时制</span>
+        </label>
+        <label class="field check">
+          <input type="checkbox" data-path="show_caption">
+          <span>显示照片说明</span>
+        </label>
+        <label class="field">
+          <span>说明内容</span>
+          <select data-path="caption_mode">
+            <option value="date">文件日期</option>
+            <option value="name">文件名</option>
+            <option value="date-name">日期 + 文件名</option>
+            <option value="none">不显示</option>
+          </select>
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>夜间息屏</legend>
+        <label class="field check">
+          <input type="checkbox" data-path="schedule.enabled">
+          <span>启用定时息屏</span>
+        </label>
+        <label class="field">
+          <span>息屏时间</span>
+          <input type="time" data-path="schedule.off">
+        </label>
+        <label class="field">
+          <span>唤醒时间</span>
+          <input type="time" data-path="schedule.on">
+        </label>
+        <p class="note">跨零点（例如 23:30 → 07:00）是支持的。屏幕会变黑但不会断电，想看时按任意键即可。</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>画质与性能</legend>
+        <label class="field">
+          <span>投屏分辨率上限</span>
+          <input type="number" data-path="max_long_edge" min="640" max="8192" step="64">
+          <em>像素（长边）</em>
+        </label>
+        <label class="field check">
+          <input type="checkbox" data-path="use_original">
+          <span>直接使用原图（画质最好，但很吃性能）</span>
+        </label>
+        <label class="field">
+          <span>预加载张数</span>
+          <input type="number" data-path="preload_count" min="1" max="20" step="1">
+        </label>
+        <label class="field check">
+          <input type="checkbox" data-path="recursive">
+          <span>包含子文件夹</span>
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>视频</legend>
+        <label class="field check">
+          <input type="checkbox" data-path="video_enabled">
+          <span>在相册中播放视频</span>
+        </label>
+        <label class="field">
+          <span>单个视频最长</span>
+          <input type="number" data-path="videos_max_seconds" min="1" max="3600" step="5">
+          <em>秒</em>
+        </label>
+        <label class="field check">
+          <input type="checkbox" data-path="muted">
+          <span>静音播放</span>
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>维护</legend>
+        <div class="row">
+          <button class="btn small" id="btn-rescan">重新扫描媒体库</button>
+          <button class="btn small danger" id="btn-purge">清空缩略图缓存</button>
+        </div>
+        <div class="capabilities" id="capabilities"></div>
+      </fieldset>
+
+    </div>
+  </section>
+</main>
+
+<footer class="statusbar">
+  <span id="status-text">就绪</span>
+  <span class="spacer"></span>
+  <span id="status-count"></span>
+</footer>
+
+<div id="toast" hidden></div>
+
+<script src="/static/admin.js"></script>
+</body>
+</html>

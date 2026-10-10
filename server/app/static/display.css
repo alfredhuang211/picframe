@@ -1,0 +1,186 @@
+/* 电子相册显示端。面向的是「远看」的场景：字号大、信息少、无边框。 */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* hidden 属性必须真的能藏住元素。
+   UA 样式表里的 [hidden]{display:none} 会被作者样式表里的 display:flex 盖掉 ——
+   作者样式整体优先于 UA 样式，跟选择器权重无关。所以像 #notice 这种自己声明了
+   display 的元素，光设 el.hidden = true 是**藏不掉**的：
+   实测结果是照片明明解码正常，整屏却被「正在连接…」永久遮住。 */
+[hidden] { display: none !important; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  color: #fff;
+  font-family: system-ui, -apple-system, "PingFang SC", "Noto Sans CJK SC",
+               "Source Han Sans SC", "Microsoft YaHei", sans-serif;
+  cursor: none;
+  user-select: none;
+}
+
+body.show-cursor { cursor: default; }
+
+/* ---------------------------------------------------------------- 画面 */
+#stage { position: absolute; inset: 0; background: var(--bg, #000); }
+
+.layer {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity var(--tms, 1200ms) ease-in-out;
+  will-change: opacity;
+}
+.layer.visible { opacity: 1; }
+
+.frame { position: absolute; inset: 0; }
+
+/* contain 模式：模糊放大的同一张图铺满背景，避免两侧黑边显得空 */
+.matte { position: absolute; inset: 0; overflow: hidden; background: var(--bg, #000); }
+
+.bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scale(1.2);
+  filter: blur(48px) saturate(1.35) brightness(0.42);
+}
+
+.fg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  z-index: 1;
+}
+
+/* cover 模式：直接铺满，不需要背景层 */
+body[data-fit="cover"] .bg { display: none; }
+body[data-fit="cover"] .fg { object-fit: cover; }
+body[data-matte="false"] .bg { display: none; }
+
+/* ---------------------------------------------------------------- Ken Burns */
+.frame.kb .fg {
+  animation: kenburns var(--kbdur, 12s) linear both;
+  transform-origin: var(--kborigin, 50% 50%);
+}
+@keyframes kenburns {
+  from { transform: scale(1) translate3d(0, 0, 0); }
+  to   { transform: scale(var(--kb, 1.08)) translate3d(var(--kbx, 0%), var(--kby, 0%), 0); }
+}
+
+/* ---------------------------------------------------------------- 进场效果 */
+body[data-transition="zoom"] .layer.visible .frame {
+  animation: enterZoom var(--tms, 1200ms) ease-out both;
+}
+@keyframes enterZoom {
+  from { transform: scale(1.05); opacity: .4; }
+  to   { transform: scale(1); opacity: 1; }
+}
+
+body[data-transition="slide"] .layer.visible .frame {
+  animation: enterSlide var(--tms, 1200ms) cubic-bezier(.22,.61,.36,1) both;
+}
+@keyframes enterSlide {
+  from { transform: translate3d(4%, 0, 0); opacity: .3; }
+  to   { transform: translate3d(0, 0, 0); opacity: 1; }
+}
+
+body[data-transition="none"] .layer { transition: none; }
+
+/* ---------------------------------------------------------------- 叠加信息 */
+#hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+#clock {
+  position: absolute;
+  left: 3.2vw;
+  top: 3vh;
+  font-size: clamp(28px, 4.4vw, 88px);
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: .02em;
+  text-shadow: 0 2px 24px rgba(0, 0, 0, .85), 0 0 2px rgba(0, 0, 0, .9);
+}
+#clock .date {
+  display: block;
+  font-size: .34em;
+  font-weight: 400;
+  opacity: .82;
+  margin-top: .35em;
+  letter-spacing: .06em;
+}
+
+#caption {
+  position: absolute;
+  left: 3.2vw;
+  right: 3.2vw;
+  bottom: 3.5vh;
+  font-size: clamp(15px, 1.5vw, 30px);
+  font-weight: 400;
+  opacity: .9;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, .9), 0 0 2px rgba(0, 0, 0, .9);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 短暂显示的提示条（切歌/遥控反馈） */
+#banner {
+  position: absolute;
+  right: 3vw;
+  bottom: 3vh;
+  z-index: 6;
+  padding: .5em 1em;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .55);
+  backdrop-filter: blur(8px);
+  font-size: clamp(13px, 1.2vw, 22px);
+  opacity: 0;
+  transition: opacity .25s ease;
+}
+#banner.show { opacity: 1; }
+
+/* ---------------------------------------------------------------- 夜间息屏 */
+#curtain {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  z-index: 8;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 2.5s ease;
+}
+body.asleep #curtain { opacity: 1; }
+
+/* ---------------------------------------------------------------- 空库 / 出错 */
+#notice {
+  position: absolute;
+  inset: 0;
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0b0d10;
+  text-align: center;
+  padding: 6vw;
+}
+.notice-card { max-width: 62ch; }
+#notice-title { font-size: clamp(22px, 2.6vw, 44px); font-weight: 600; margin-bottom: .6em; }
+#notice-body { font-size: clamp(15px, 1.5vw, 26px); line-height: 1.6; opacity: .78; }
+.notice-url {
+  margin-top: 1.4em;
+  font-size: clamp(16px, 1.7vw, 30px);
+  font-weight: 600;
+  color: #6ea8fe;
+  word-break: break-all;
+}
