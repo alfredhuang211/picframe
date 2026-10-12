@@ -1,5 +1,7 @@
 # PicFrame · 把 NAS 的 HDMI 变成电子相册
 
+[![构建并发布镜像](https://github.com/alfredhuang211/picframe/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/alfredhuang211/picframe/actions/workflows/docker-publish.yml)
+
 **飞牛 fnOS / 群晖 / 任意 Debian 都能跑** —— 装两个容器，把 NAS 的 HDMI 接口变成一块全屏电子相册：**手机或电脑上打开网页，勾选要播的文件夹和照片，电视上立刻生效。**
 
 ```
@@ -487,18 +489,24 @@ python -m venv ../.venv && ../.venv/bin/pip install -r requirements.txt pytest w
 
 每个镜像用独立的 `gha` 缓存 scope，apt/pip 层会被复用，第二次之后的构建快很多。
 
+> 构建产物还会附带 **provenance + SBOM** 证明（build-push-action 的默认行为）。在镜像
+> 清单里表现为多出一条 `unknown/unknown` 平台的条目 —— 这是正常的，不是构建出错。
+> 不需要的话，在 workflow 的构建步骤里加一行 `provenance: false` 即可关掉。
+
 ### 需要配置的密钥
 
 **一个都不需要。** 工作流用内置的 `GITHUB_TOKEN` 登录 GHCR，只需 `packages: write`
 权限（已在工作流里声明）。Pull Request 触发的构建不推送，因此连登录都跳过。
 
-### 首次发布后要手动做一次
+### 包可见性
 
-GHCR 上的包初始可能是**私有**可见性，匿名 `docker pull` 会拿到 `403`。到
-<https://github.com/users/alfredhuang211/packages> 点进对应的包 →
-**Package settings** → **Change visibility** → **Public**。改一次永久生效。
+GHCR 上的包**不一定**跟仓库同可见性。如果匿名 `docker pull` 拿到 `403` / `denied`，
+说明包还是私有，到 <https://github.com/users/alfredhuang211/packages> 点进对应的包 →
+**Package settings** → **Change visibility** → **Public**，改一次永久生效。
 
-（用 `docker login ghcr.io -u 你的用户名` 带 token 拉取则不受影响。）
+> 这两个包**当前已确认是 public**：用匿名 token 实测拉取
+> `ghcr.io/v2/alfredhuang211/picframe/manifests/latest` 返回 `200`，
+> 所以 `docker compose pull` 不需要登录、不需要凭据。
 
 ### 本地校验工作流
 
