@@ -7,7 +7,7 @@
 # 顺带 trixie 自带 chromium 150 和 Mesa 25，对 Ozone/Wayland 支持更好。
 #
 # 构建：
-#   docker build -t fnos-picframe-display:latest ./display
+#   docker build -t ghcr.io/alfredhuang211/picframe-display:latest ./display
 
 FROM debian:trixie-slim
 

@@ -1,9 +1,9 @@
 # 相册服务：Web 后端 + 管理界面 + 幻灯片页面
 #
 # 构建：
-#   docker build -t fnos-picframe:latest ./server
+#   docker build -t ghcr.io/alfredhuang211/picframe:latest ./server
 # 想要更小的镜像（代价是视频只能显示占位图）：
-#   docker build -t fnos-picframe:latest --build-arg INSTALL_FFMPEG=false ./server
+#   docker build -t ghcr.io/alfredhuang211/picframe:latest --build-arg INSTALL_FFMPEG=false ./server
 
 FROM python:3.12-slim-bookworm
 

@@ -5,7 +5,11 @@
 #   picframe-display  HDMI 显示端（cage + Chromium 全屏 kiosk），需要直通显卡
 #
 # 用法：
-#   cp .env.example .env   # 按里面的说明改路径
+#   cp .env.example .env             # 按里面的说明改路径
+#   docker compose pull              # 拉取预构建镜像（推荐，免本地构建）
+#   docker compose up -d
+#
+# 想改代码后本地重新构建，把上面两行换成：
 #   docker compose up -d --build
 #
 # 在 x86 的 fnOS 上部署时，先看 README.md 的「部署」一节。
@@ -18,7 +22,9 @@ services:
   picframe:
     build:
       context: ./server
-    image: fnos-picframe:latest
+    # 与 GitHub Actions 发布到 GHCR 的镜像同名，本地构建和远端拉取共用这一个标签。
+    # 只想拉镜像不构建：docker compose pull
+    image: ghcr.io/alfredhuang211/picframe:latest
     container_name: picframe
     restart: always
     ports:
@@ -55,7 +61,7 @@ services:
   picframe-display:
     build:
       context: ./display
-    image: fnos-picframe-display:latest
+    image: ghcr.io/alfredhuang211/picframe-display:latest
     container_name: picframe-display
     restart: always
 

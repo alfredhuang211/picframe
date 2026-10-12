@@ -69,7 +69,9 @@ mkdir -p /vol1/1000/docker/picframe
 exit
 ```
 
-然后把本项目的 `docker-compose.yml`、`.env.example`、`server/`、`display/` 传到 `/vol1/1000/docker/picframe/`（用 fnOS 文件管理上传压缩包再解压，或者 `scp`）。
+用预构建镜像部署的话，**只需要两个文件**：`docker-compose.yml` 和 `.env.example`，传到 `/vol1/1000/docker/picframe/` 即可（用 fnOS 文件管理上传，或者 `scp`）。
+
+> 想在 NAS 上自己编译（改过代码、或不想依赖 GHCR），再把 `server/`、`display/` 一起传过去。
 
 > 用「文件管理 → 右键文件夹 → 详细信息 → **复制原始路径**」拿到的路径最准，**原样使用**，不要自己把 `/vol02/...` 改写成 `/vol1/...`。
 
@@ -110,23 +112,56 @@ chown -R 1000:1000 /vol1/1000/docker/picframe
 ss -tlnp | grep 18080    # 应该没有任何输出
 ```
 
-### 4. 构建并启动
+### 4. 拉取镜像并启动
+
+镜像由 GitHub Actions 在每次提交后自动构建并发布到 GHCR，**正常情况下不需要在 NAS 上编译**：
+
+```bash
+cd /vol1/1000/docker/picframe
+sudo docker compose pull
+sudo docker compose up -d
+sudo docker compose ps
+```
+
+| 服务 | 镜像 |
+| --- | --- |
+| 相册服务 | `ghcr.io/alfredhuang211/picframe:latest` |
+| HDMI 显示端 | `ghcr.io/alfredhuang211/picframe-display:latest` |
+
+> 这比本地构建省事得多：display 镜像要装 Chromium、Mesa 和中文字体，在 NAS 那种 CPU 上编译要好几分钟，
+> 而且 ARM 机器还得交叉构建。发布流程见「八、持续集成」。
+
+> **`pull` 报 `denied` / `403`**：说明 GHCR 上的包还是私有可见性。打开
+> <https://github.com/users/alfredhuang211/packages> → 点进对应的包 →
+> **Package settings** → **Change visibility** → **Public**。或者改用下面的本地构建。
+
+<details>
+<summary><b>备选：在 NAS 上本地构建</b>（改过代码、或不想依赖 GHCR 时展开）</summary>
+
+把 `server/`、`display/` 也传到项目目录，然后：
 
 ```bash
 cd /vol1/1000/docker/picframe
 sudo docker compose up -d --build
-sudo docker compose ps
 ```
 
-> **如果你的电脑是 ARM 的 Mac**（在本地构建再传到 NAS），必须指定目标架构：
-> `docker buildx build --platform linux/amd64 -t fnos-picframe:latest ./server --load`
-> 在 x86 的 NAS 上直接 `docker compose up -d --build` 则不需要。
+> **在 ARM 的 Mac 上构建再传到 NAS**，必须指定目标架构（NAS 是 x86_64）：
+>
+> ```bash
+> docker buildx build --platform linux/amd64 -t ghcr.io/alfredhuang211/picframe:latest ./server --load
+> docker buildx build --platform linux/amd64 -t ghcr.io/alfredhuang211/picframe-display:latest ./display --load
+> ```
+>
+> 在 x86 的 NAS 上直接 `--build` 则不需要指定。
+> （本项目也可以手动触发 Actions 选择构建 `linux/amd64,linux/arm64` 多架构镜像。）
+
+</details>
 
 **也可以走 fnOS 的图形界面**：Docker → **Compose** → 新增项目 → 粘贴 `docker-compose.yml` 内容 → 勾选「创建项目后立即启动」。
 
 > ⚠️ **走 GUI 粘贴 YAML 有两个坑**：
 >
-> 1. `build:` 需要构建上下文存在于 NAS 上；想省事可以先在别处构建好镜像、`docker save` 传过去 `docker load`，再让 compose 直接用镜像。
+> 1. 用预构建镜像时 compose 不需要构建上下文。如果 YAML 里保留了 `build:`，先把镜像拉到本地（`docker compose pull`）再启动，compose 就不会去找 `server/`、`display/` 目录；把 `build:` 那两行删掉也等效。
 > 2. YAML 里的 `${PHOTO_DIR_1:?请先复制 .env.example 为 .env 并设置 PHOTO_DIR_1}` 是**必填变量**。GUI 生成的项目目录不会读你手写的 `.env`，`docker compose` 会在变量插值阶段直接报错退出。走 GUI 时请把那一行改成你的真实路径（例如 `- /vol1/1000:/photos/main:ro`），或者干脆用上面的命令行方式。
 
 ### 5. 验证
@@ -358,6 +393,8 @@ df -h /var/lib/containerd /vol1 2>/dev/null
 
 ```
 .
+├── .github/workflows/
+│   └── docker-publish.yml      CI：提交后自动构建两个镜像并发布到 GHCR
 ├── docker-compose.yml          两个服务的编排
 ├── .env.example                配置模板（路径、端口、PUID/PGID）
 ├── server/                     相册服务
@@ -420,6 +457,58 @@ python -m venv ../.venv && ../.venv/bin/pip install -r requirements.txt pytest w
 
 ---
 
-## 八、许可证
+## 八、持续集成
+
+`.github/workflows/docker-publish.yml` 在每次提交后自动构建两个镜像，并推送到
+[GitHub Container Registry](https://github.com/users/alfredhuang211/packages)：
+
+| 镜像 | 构建上下文 |
+| --- | --- |
+| `ghcr.io/alfredhuang211/picframe` | `server/` |
+| `ghcr.io/alfredhuang211/picframe-display` | `display/` |
+
+### 触发规则
+
+| 事件 | 行为 |
+| --- | --- |
+| push 到 `main` | 构建并推送 `latest`、`main`、`sha-xxxxxxxx` |
+| push 标签 `v1.2.3` | 构建并推送 `1.2.3`、`1.2` |
+| Pull Request | 只构建校验，**不推送** |
+| 手动触发 | 可选 `linux/amd64`（默认）或 `linux/amd64,linux/arm64` |
+
+两个镜像**并行**构建、互不影响（`fail-fast: false`）；同一分支连续提交时，会取消
+上一次尚未完成的构建。
+
+### 架构
+
+默认只构建 **`linux/amd64`** —— fnOS / 群晖的 x86 机型是主要目标。arm64 在 GitHub
+的 x86 runner 上要走 QEMU 模拟，display 镜像（Chromium + Mesa + 中文字体）会慢一个
+数量级，所以只作为手动触发时的可选项。需要多架构就去 Actions 页面点 **Run workflow**。
+
+每个镜像用独立的 `gha` 缓存 scope，apt/pip 层会被复用，第二次之后的构建快很多。
+
+### 需要配置的密钥
+
+**一个都不需要。** 工作流用内置的 `GITHUB_TOKEN` 登录 GHCR，只需 `packages: write`
+权限（已在工作流里声明）。Pull Request 触发的构建不推送，因此连登录都跳过。
+
+### 首次发布后要手动做一次
+
+GHCR 上的包初始可能是**私有**可见性，匿名 `docker pull` 会拿到 `403`。到
+<https://github.com/users/alfredhuang211/packages> 点进对应的包 →
+**Package settings** → **Change visibility** → **Public**。改一次永久生效。
+
+（用 `docker login ghcr.io -u 你的用户名` 带 token 拉取则不受影响。）
+
+### 本地校验工作流
+
+```bash
+brew install actionlint
+actionlint .github/workflows/docker-publish.yml
+```
+
+---
+
+## 九、许可证
 
 [MIT](LICENSE) © 2026 Alfred Huang

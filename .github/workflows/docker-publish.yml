@@ -1,0 +1,113 @@
+# 构建两个镜像并推送到 GitHub Container Registry (GHCR)。
+#
+#   picframe          <- server/    相册服务（Web 后端 + 管理界面 + 幻灯片页面）
+#   picframe-display  <- display/   HDMI 显示端（cage + Chromium 全屏 kiosk）
+#
+# 触发方式：
+#   · push 到 main        -> 构建并推送  latest + main + sha-xxxxxxxx
+#   · push 标签 v1.2.3    -> 构建并推送  1.2.3 + 1.2
+#   · Pull Request        -> 只构建校验，不推送（不需要任何密钥）
+#   · 手动触发            -> 可选 amd64（默认）或 amd64+arm64
+#
+# 目标架构默认只构建 linux/amd64：fnOS / 群晖的 x86 机型是主要目标。
+# arm64 在 GitHub 的 x86 runner 上要走 QEMU 模拟，display 镜像（chromium +
+# mesa + 中文字体）会慢一个数量级，所以只在手动触发时作为可选项提供。
+#
+# 首次推送后，到 https://github.com/users/alfredhuang211/packages 把包的
+# 可见性改成 Public，否则匿名 docker pull 会 403（见 README「用预构建镜像部署」）。
+name: 构建并发布镜像
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 目标架构
+        type: choice
+        default: linux/amd64
+        options:
+          - linux/amd64
+          - linux/amd64,linux/arm64
+
+permissions:
+  contents: read
+  packages: write
+
+# 同一分支连续提交时取消上一次尚未完成的构建，省 CI 额度
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    strategy:
+      # 一个镜像失败不取消另一个，两个架构的结果都能看到
+      fail-fast: false
+      matrix:
+        include:
+          - image: picframe
+            context: ./server
+            title: PicFrame 相册服务
+          - image: picframe-display
+            context: ./display
+            title: PicFrame HDMI 显示端
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+
+      - name: 设置 Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # PR 不推送，因此也不需要登录
+      - name: 登录 GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 生成标签与元数据
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          labels: |
+            org.opencontainers.image.title=${{ matrix.title }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+
+      - name: 构建并推送
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          platforms: ${{ inputs.platforms || 'linux/amd64' }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # gha 缓存按镜像名分 scope，避免两个镜像互相覆盖
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+      - name: 写入任务摘要
+        run: |
+          {
+            echo "### \`${{ matrix.image }}\`"
+            echo
+            echo "构建上下文：\`${{ matrix.context }}\`"
+            echo
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
