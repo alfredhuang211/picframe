@@ -24,6 +24,56 @@
 
 ---
 
+## 快速开始：在 fnOS 上跑起来
+
+镜像由 GitHub Actions 自动构建并发布到 GHCR，**NAS 上不用编译任何东西，也不用下载源码**。
+
+> 前提：x86_64 的 fnOS，并且**打开过一次「Docker」应用**完成引导（否则容器相关的功能不可用）。
+
+```bash
+# 1) 先以你自己的账号确认 uid / gid —— 下面 PUID/PGID 要填这里查到的数字
+#    fnOS 首个用户通常是 uid=1000、gid=100
+id
+
+# 2) 切到 root，建目录并只拉两个文件（不需要下载源码）
+sudo -i
+mkdir -p /vol1/1000/docker/picframe && cd /vol1/1000/docker/picframe
+curl -fsSLO https://raw.githubusercontent.com/alfredhuang211/picframe/main/docker-compose.yml
+curl -fsSL  https://raw.githubusercontent.com/alfredhuang211/picframe/main/.env.example -o .env
+
+# 3) 改照片目录、数据目录和运行身份
+vi .env
+
+# 4) 建数据目录（把 1000:1000 换成上面 id 查到的数字）
+mkdir -p config cache
+chown -R 1000:1000 /vol1/1000/docker/picframe
+
+# 5) 启动 —— compose 会先拉取 GHCR 上构建好的镜像
+docker compose up -d
+docker compose ps
+```
+
+`.env` 里至少要改这 4 个：
+
+```ini
+PHOTO_DIR_1=/vol1/1000                        # 照片目录。建议挂上层目录，方便在界面里自由挑
+PICFRAME_DATA=/vol1/1000/docker/picframe      # 配置与缩略图缓存
+PUID=1000                                     # 上面 id 查到的 uid
+PGID=100                                      # 上面 id 查到的**组** id，fnOS 通常是 100
+```
+
+然后浏览器打开 **`http://<NAS的IP>:18080/`** —— 那是管理界面；插着 HDMI 的那块屏幕已经开始放幻灯片了。
+
+> **为什么 `up -d` 不用加 `--build`**：compose 文件里同时写了 `build:` 和 `image:`，
+> 在没设 `pull_policy` 时 Compose 的规则是**先尝试拉取镜像，拉不到才回退本地构建**
+> （见 [Compose 规范](https://docs.docker.com/reference/compose-file/build/#using-build-and-image)）。
+> 所以默认走的就是 GHCR 上的预构建镜像；只有显式加 `--build` 才会强制在 NAS 上编译。
+
+> 卡住了？「二、部署」有每一步的详细解释和验证命令，「四、排查」按症状分层排查。
+> 镜像怎么构建、怎么发版的见「八、持续集成」。
+
+---
+
 ## 一、为什么是这样设计的
 
 动手之前先确认了几个事实，它们直接决定了方案：
@@ -71,9 +121,17 @@ mkdir -p /vol1/1000/docker/picframe
 exit
 ```
 
-用预构建镜像部署的话，**只需要两个文件**：`docker-compose.yml` 和 `.env.example`，传到 `/vol1/1000/docker/picframe/` 即可（用 fnOS 文件管理上传，或者 `scp`）。
+用预构建镜像部署的话，**只需要两个文件**。可以直接在 NAS 上拉下来，不用手工上传：
 
-> 想在 NAS 上自己编译（改过代码、或不想依赖 GHCR），再把 `server/`、`display/` 一起传过去。
+```bash
+cd /vol1/1000/docker/picframe
+curl -fsSLO https://raw.githubusercontent.com/alfredhuang211/picframe/main/docker-compose.yml
+curl -fsSL  https://raw.githubusercontent.com/alfredhuang211/picframe/main/.env.example -o .env
+```
+
+也可以走 fnOS 的「文件管理」上传这两个文件（`docker-compose.yml` 和 `.env.example`，再把后者改名成 `.env`），或者用 `scp`。
+
+> 想在 NAS 上自己编译（改过代码、或不想依赖 GHCR），再把 `server/`、`display/` 一起传过去，见本节末尾的「备选：在 NAS 上本地构建」。
 
 > 用「文件管理 → 右键文件夹 → 详细信息 → **复制原始路径**」拿到的路径最准，**原样使用**，不要自己把 `/vol02/...` 改写成 `/vol1/...`。
 
@@ -165,6 +223,29 @@ sudo docker compose up -d --build
 >
 > 1. 用预构建镜像时 compose 不需要构建上下文。如果 YAML 里保留了 `build:`，先把镜像拉到本地（`docker compose pull`）再启动，compose 就不会去找 `server/`、`display/` 目录；把 `build:` 那两行删掉也等效。
 > 2. YAML 里的 `${PHOTO_DIR_1:?请先复制 .env.example 为 .env 并设置 PHOTO_DIR_1}` 是**必填变量**。GUI 生成的项目目录不会读你手写的 `.env`，`docker compose` 会在变量插值阶段直接报错退出。走 GUI 时请把那一行改成你的真实路径（例如 `- /vol1/1000:/photos/main:ro`），或者干脆用上面的命令行方式。
+
+### 4.1 之后怎么更新
+
+每次提交到 `main`，Actions 都会重新构建并覆盖 `latest`。所以在 NAS 上更新只要两步：
+
+```bash
+cd /vol1/1000/docker/picframe
+sudo docker compose pull && sudo docker compose up -d
+```
+
+`up -d` 只会重建镜像有变化的那个容器，`config/`（你选的片、播放设置）和 `cache/`（缩略图）都不动。
+
+**想锁定版本**、避免某次更新带来问题，把标签填进 `.env` 就行：
+
+```ini
+PICFRAME_TAG=sha-c553750     # 某次提交构建的镜像；也可以填正式版本号，例如 1.2.3
+```
+
+改回 `PICFRAME_TAG=latest` 即可恢复跟随最新。两个镜像**共用**同一个 `PICFRAME_TAG`。
+可用标签见 <https://github.com/alfredhuang211/picframe/pkgs/container/picframe>
+（显示端是同一个前缀下的 `picframe-display`）。
+
+**回滚**：把 `PICFRAME_TAG` 改回上一个可用的提交号，再 `docker compose pull && docker compose up -d`。
 
 ### 5. 验证
 

@@ -22,9 +22,9 @@ services:
   picframe:
     build:
       context: ./server
-    # 与 GitHub Actions 发布到 GHCR 的镜像同名，本地构建和远端拉取共用这一个标签。
-    # 只想拉镜像不构建：docker compose pull
-    image: ghcr.io/alfredhuang211/picframe:latest
+    # 与 GitHub Actions 发布到 GHCR 的镜像同名：本地构建和远端拉取共用这一个标签。
+    # 版本由 .env 的 PICFRAME_TAG 控制（默认 latest，可填 sha-xxxxxxx 锁定版本）。
+    image: ghcr.io/alfredhuang211/picframe:${PICFRAME_TAG:-latest}
     container_name: picframe
     restart: always
     ports:
@@ -61,7 +61,7 @@ services:
   picframe-display:
     build:
       context: ./display
-    image: ghcr.io/alfredhuang211/picframe-display:latest
+    image: ghcr.io/alfredhuang211/picframe-display:${PICFRAME_TAG:-latest}
     container_name: picframe-display
     restart: always
 
